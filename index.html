@@ -1,0 +1,284 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>Grasco</title>
+  <link href="https://fonts.googleapis.com/css2?family=Roboto+Mono&display=swap" rel="stylesheet">
+  <style>
+  @keyframes fadeSlideIn {
+    0% {
+      opacity: 0.5;
+      transform: translateY(20px);
+    }
+    100% {
+      opacity: 1;
+      transform: translateY(0);
+    }
+  }
+
+  body {
+    margin: 0;
+    background: #0d1117;
+    color: #c9d1d9;
+    font-family: 'Roboto Mono', monospace;
+    display: flex;
+    flex-direction: column;
+    height: 100vh;
+  }
+
+  #chat-container {
+    flex: 1;
+    overflow-y: auto;
+    padding: 20px;
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+  }
+
+  #chat-container, #input-container {
+  position: relative;
+  z-index: 2;
+}
+
+  .message {
+    max-width: 70%;
+    padding: 10px 14px;
+    border-radius: 12px;
+    white-space: pre-wrap;
+    word-wrap: break-word;
+    opacity: 0;
+    animation: fadeSlideIn 0.4s ease forwards;
+  }
+
+  .user {
+    align-self: flex-end;
+    background: #238636;
+  }
+
+  .ai {
+    align-self: flex-start;
+    background: #161b22;
+    border: 1px solid #30363d;
+  }
+
+  #input-container {
+    display: flex;
+    padding: 12px;
+    border-top: 1px solid #30363d;
+    background: #161b22;
+  }
+
+  #prompt {
+    flex: 1;
+    background: rgba(41, 41, 41, 0.08);
+    color: white;
+    border: 1px solid #2e2e2e;
+    border-radius: 8px;
+    padding: 12px 14px;
+    font-size: 16px;
+    transition: all 0.3s ease;
+    backdrop-filter: blur(4px);
+    font-family: 'Roboto Mono', monospace;
+  }
+
+  #prompt:focus {
+    outline: none;
+    border-color: #4b4b4b;
+    background: rgba(88, 88, 88, 0.08);
+  }
+
+  #send-btn {
+    margin-left: 10px;
+    background: rgba(172, 172, 172, 0.08);
+    font-family: 'Roboto Mono', monospace;
+    border: none;
+    padding: 12px 20px;
+    color: white;
+    border-radius: 8px;
+    cursor: pointer;
+    transition: transform 0.2s ease, background 0.2s ease;
+    font-size: 16px;
+    border: 1px solid #3b3b3b;
+  }
+
+  #send-btn:disabled {
+    background: rgba(172, 172, 172, 0.05);
+    border: 1px solid #3f3f3f;
+    color: #888;
+    cursor: not-allowed;
+    transform: none;
+  }
+
+  #send-btn:hover:not(:disabled) {
+    background: rgba(172, 172, 172, 0.1);
+    border: 1px solid #4d4d4d;
+    transform: scale(1.05);
+  }
+
+  #send-btn:active:not(:disabled) {
+    transform: scale(0.97);
+  }
+
+  #empty-state {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: #9ab;
+  font-size: 20px;
+  font-family: 'Roboto Mono', monospace;
+  pointer-events: none;
+  user-select: none;
+  background: #0d1117;
+  z-index: 1;
+  transition: all 0.2s ease;
+  transform: scale(0);
+  opacity: 0;
+}
+
+.no-msg-cover {
+  max-width: 90%;
+  padding: 20px;
+  background: #0e1015;
+  border: 1px solid #2c2f36;
+  border-radius: 8px;
+  box-shadow: 0 0 30px rgba(0, 255, 0, 0.1);
+  color: #00ff95;
+  text-shadow: 0 0 3px #00ff95;
+}
+
+.blinking-caret {
+  animation: blink 1s steps(2, start) infinite;
+}
+
+@keyframes blink {
+  100% { opacity: 1; }
+  0% { opacity: 0; }
+}
+
+</style>
+</head>
+<body>
+  <div id="empty-state">
+    <div class="no-msg-cover">
+      <span id="typing-line"></span><span class="blinking-caret">█</span>
+    </div>
+  </div>
+  <div id="chat-container">
+  </div>
+  <div id="input-container">
+    <input type="text" id="prompt" placeholder="Type your message here..." />
+    <button id="send-btn">Send</button>
+  </div>
+
+  <script src="https://cdn.socket.io/4.5.4/socket.io.min.js"></script>
+  <script>
+    //const socket = io("http://localhost:5000");
+    const socket = io("https://grasco.onrender.com")
+    const chat = document.getElementById('chat-container');
+    const promptInput = document.getElementById('prompt');
+    const sendBtn = document.getElementById('send-btn');
+
+    function parseMarkdown(text) {
+      return text
+        .replace(/```([\s\S]+?)```/g, '<pre><code>$1</code></pre>')
+        .replace(/`([^`\n]+)`/g, '<code>$1</code>')
+        .replace(/\*\*([^*]+)\*\*/g, '<b>$1</b>')
+        .replace(/\*([^*]+)\*/g, '<i>$1</i>');
+    }
+
+    function addMessage(text, sender) {
+      const msg = document.createElement('div');
+      msg.classList.add('message', sender);
+      msg.innerHTML = parseMarkdown(text); // гse innerHTML instead of textContent
+      chat.appendChild(msg);
+      chat.scrollTop = chat.scrollHeight;
+    }
+
+    function setLoading(isLoading) {
+      sendBtn.disabled = isLoading;
+      sendBtn.textContent = isLoading ? "Generating..." : "Send";
+    }
+
+    sendBtn.addEventListener('click', () => {
+      const prompt = promptInput.value.trim();
+      if (!prompt) return;
+
+      addMessage(prompt, 'user');
+      setLoading(true);
+      socket.emit('generate', { prompt });
+      promptInput.value = '';
+    });
+
+    promptInput.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter' && !sendBtn.disabled) sendBtn.click();
+    });
+
+    socket.on('response', (data) => {
+      setLoading(false);
+      if (data.error) {
+        addMessage("[ERROR] " + data.error, 'ai');
+      } else {
+        addMessage(data.text, 'ai');
+      }
+    });
+  </script>
+   <script>
+    const typingLine = document.getElementById('typing-line');
+    const prompts = [
+      "What the fuck is Python?",
+      "How can I fucking cook?",
+      "Why is my code so fucking dumb?",
+      "Do you have any bitches?",
+      "Why Javascript fucking sucks?",
+      "Can I marry ChatGPT?",
+      "Yo, gurt!"
+    ];
+    let i = 0;
+
+    function typeOut(text) {
+      let idx = 0;
+      typingLine.textContent = '';
+      const interval = setInterval(() => {
+        if (idx < text.length) {
+          typingLine.textContent += text[idx++];
+        } else {
+          clearInterval(interval);
+          setTimeout(() => {
+            i = (i + 1) % prompts.length;
+            typeOut(prompts[i]);
+          }, 2000);
+        }
+      }, 70);
+    }
+    function updateEmptyStateVisibility() {
+        const emptyState = document.getElementById('empty-state');
+        const hasMessages = chat.children.length > 0;
+
+        if (!hasMessages) {
+            emptyState.style.opacity = '1';
+            emptyState.style.transform = 'scale(1)';
+            emptyState.style.pointerEvents = 'auto';
+            console.log('empty');
+        } else {
+            emptyState.style.opacity = '0';
+            emptyState.style.transform = 'scale(0.8)';
+            emptyState.style.pointerEvents = 'none';
+            console.log('not empty');
+        }
+    }
+
+    // anim start
+    typeOut(prompts[0]);
+    updateEmptyStateVisibility();
+
+    const originalAddMessage = addMessage;
+    addMessage = function (text, sender) {
+        originalAddMessage(text, sender);
+        updateEmptyStateVisibility();
+    };
+  </script>
+</body>
+</html>
